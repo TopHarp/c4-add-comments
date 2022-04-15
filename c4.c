@@ -106,7 +106,7 @@ void next()
     else if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') || tk == '_') {
       pp = p - 1;     // gyxu 记录初始位置
       while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')
-        tk = tk * 147 + *p++;         // gyxu 计算hash
+        tk = tk * 147 + *p++;         // gyxu 计算hash 向后读取字节
       tk = (tk << 6) + (p - pp);      // gyxu p-pp 变量名字符数   上一行while包括本行 目的是计算hash
       id = sym;
       while (id[Tk]) {    // gyxu 查看符号表里是否已经存在该变量  如果已存在 返回变量tk sym未赋值的表id[Tk]是0
@@ -132,7 +132,7 @@ void next()
       tk = Num;
       return;
     }
-    // gyxu  //注释  除法
+    // gyxu  注释或除法
     else if (tk == '/') {
       if (*p == '/') {
         ++p;
@@ -143,14 +143,14 @@ void next()
         return;
       }
     }
-    // gyxu 字符串 \'  或 "  \'表示'  \a表示字符a  静态区 代码中定义的字符串
+    // gyxu 字符串 反斜杠转义字符 '  或 "    静态区 代码中定义的字符串
     else if (tk == '\'' || tk == '"') {
       pp = data;
-      while (*p != 0 && *p != tk) {     // gyxu tk中目前放的是 \' 或 "
-        if ((ival = *p++) == '\\') {    // gyxu  \\表示\
+      while (*p != 0 && *p != tk) {     // gyxu tk中目前放的是 ' 或 "
+        if ((ival = *p++) == '\\') {    // gyxu  表示反斜杠
           if ((ival = *p++) == 'n') ival = '\n';
         }
-        if (tk == '"') *data++ = ival;   // gyxu tk中目前放的是 \'或"  将p中字符串装入data区
+        if (tk == '"') *data++ = ival;   // gyxu 将p中字符串装入data区
       }
       ++p;
       if (tk == '"') ival = (int)pp; else tk = Num;   // gyxu 如果只是单个字符 返回Num类
@@ -376,7 +376,6 @@ void stmt()
   }
 }
 
-
 // gyxu main()的后半部分实现虚拟机 它的编译器部分不直接生成任何实际的机器汇编代码 而是在内存生成c4自己的虚拟机指令
 int main(int argc, char **argv)
 {
@@ -389,7 +388,7 @@ int main(int argc, char **argv)
   // gyxu sp 指针寄存器 指向栈顶 通常栈由高地址向低地址生长时 入栈时sp减小
   // gyxu bp 基址指针 指向栈的某一位置
   // gyxu a 通用寄存器 存结果？
-  int *pc, *sp, *bp, a, cycle; // vm registers 
+  int *pc, *sp, *bp, a, cycle; // vm registers
   int i, *t; // temps
 
   // gyxu 编译命令 -s src -d debug
@@ -416,9 +415,10 @@ int main(int argc, char **argv)
   memset(e,    0, poolsz);
   memset(data, 0, poolsz);
 
+  // gyxu 在词法分析前将关键字加入符号表
   p = "char else enum if int return sizeof while "
       "open read close printf malloc free memset memcmp exit void main";
-  // gyxu next()中 sym被赋给id p此时内容为上一行的赋值 所以sym表表头是关键字"char else enum if int return sizeof while "
+  // gyxu next()中 sym被赋给id p此时内容为上一行的赋值 所以sym表表头是关键字char else enum if int return sizeof while
   i = Char; while (i <= While) { next(); id[Tk] = i++; } // add keywords to symbol table
   // gyxu 添加外部函数库到符号表
   i = OPEN; while (i <= EXIT) { next(); id[Class] = Sys; id[Type] = INT; id[Val] = i++; } // add library to symbol table
@@ -433,12 +433,14 @@ int main(int argc, char **argv)
   p[i] = 0;
   close(fd);
 
+  // gyxu 解析声明
   // parse declarations
-  line = 1;
-  next();
+  line = 1;     // gyxu line在next()中增加
+  next();       // gyxu 读取源码第一个字节
+  // gyxu 把所有源码检查一遍？
   while (tk) {
     bt = INT; // basetype
-    if (tk == Int) next();
+    if (tk == Int) next();      // gyxu 关键字int类型
     else if (tk == Char) { next(); bt = CHAR; }
     else if (tk == Enum) {
       next();
