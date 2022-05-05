@@ -13,10 +13,10 @@
 #include <fcntl.h>
 #define int long long
 
-char *p, *lp, // current position in source code
+char *p, *lp, // current position in source code // gyxu lp每行起始位置
      *data;   // data/bss pointer    // gyxu 20220415 是否是 bss段Block Started by Symbol 存放程序中未初始化全局变量的一块内存区域 静态区域 程序一开始就将其清零
 
-int *e, *le,  // current position in emitted code
+int *e, *le,  // current position in emitted code     // gyxu 代码段 内存指针
     *id,      // currently parsed identifier
     *sym,     // symbol table (simple list of identifiers)
     tk,       // current token
@@ -63,6 +63,10 @@ enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
 // types
 enum { CHAR, INT, PTR };
 
+
+// gyxu attribute属性 表示某个程序构造相关的任意的量 比如表达式的数据类型、生成代码的指令数目 或为某个构造生成的代码中第一条指令的位置
+
+
 // gyxu 标识符结构体 符号表sym int型数组
 // identifier offsets (since we can't create an ident struct)
 enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Idsz };
@@ -78,15 +82,17 @@ enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Idsz };
 // gyxu                    +-------+                      +--------+
 // gyxu 词法分析工具 lex flex
 // gyxu 不一次性将所有代码全部转换成标记，1.标记与上下文有关，是有状态的，2.保存所有标记浪费空间没有意义。实际是提供一个函数，调用函数返回下一个标记
+// gyxu 返回由tk带出  ival带出数字数值
 void next()
 {
   char *pp;
 
-  // gyxu 用while跳过空格 跳过不认识的符号
+  // gyxu 用while跳过空格(ascii 32) 跳过不认识的符号 while到有认识的字符才处理并return     while(exp) 先赋值 后判断左值
   while (tk = *p) {
     ++p;
+    // gyxu====== 换行
     if (tk == '\n') {
-      if (src) {
+      if (src) {      // gyxu 编译器选项 标志位 是否打印代码和汇编
         printf("%d: %.*s", line, p - lp, lp);
         lp = p;
         while (le < e) {
@@ -98,11 +104,11 @@ void next()
       }
       ++line;   // gyxu 换行符 行号加一
     }
-    // gyxu 不支持宏定义 跳过
+    // gyxu====== 不支持宏定义 跳过
     else if (tk == '#') {
       while (*p != 0 && *p != '\n') ++p;
     }
-    // gyxu 标识符 首字母以大小写字母 数字 下划线开始 包括进了关键字
+    // gyxu====== 标识符 首字母以大小写字母 数字 下划线开始 包括进了关键字
     else if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') || tk == '_') {
       pp = p - 1;     // gyxu 记录初始位置
       while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')
@@ -118,7 +124,7 @@ void next()
       tk = id[Tk] = Id;     // gyxu Id在enum中值是133 Id是类型  待定20220414  tk返回有其他用途 所以被赋值 最后tk返回133 Id
       return;
     }
-    // gyxu 数字 支持0xff十六进制数据
+    // gyxu====== 数字 支持0xff十六进制数据
     else if (tk >= '0' && tk <= '9') {
       // gyxu 十进制
       if (ival = tk - '0') { while (*p >= '0' && *p <= '9') ival = ival * 10 + *p++ - '0'; }
@@ -132,7 +138,7 @@ void next()
       tk = Num;
       return;
     }
-    // gyxu  注释或除法
+    // gyxu======  注释或除法
     else if (tk == '/') {
       if (*p == '/') {
         ++p;
@@ -143,7 +149,7 @@ void next()
         return;
       }
     }
-    // gyxu 字符串 反斜杠转义字符 '  或 "    静态区 代码中定义的字符串
+    // gyxu====== 字符串 反斜杠转义字符 '  或 "    静态区 代码中定义的字符串
     else if (tk == '\'' || tk == '"') {
       pp = data;
       while (*p != 0 && *p != tk) {     // gyxu tk中目前放的是 ' 或 "
@@ -156,7 +162,7 @@ void next()
       if (tk == '"') ival = (int)pp; else tk = Num;   // gyxu 如果只是单个字符 返回Num类
       return;
     }
-    // gyxu p已经++  tk第一个字符 p第二个字符
+    // gyxu====== p已经++  tk第一个字符 p第二个字符
     else if (tk == '=') { if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return; }
     else if (tk == '+') { if (*p == '+') { ++p; tk = Inc; } else tk = Add; return; }
     else if (tk == '-') { if (*p == '-') { ++p; tk = Dec; } else tk = Sub; return; }
@@ -170,11 +176,12 @@ void next()
     else if (tk == '*') { tk = Mul; return; }
     else if (tk == '[') { tk = Brak; return; }
     else if (tk == '?') { tk = Cond; return; }
-    // gyxu 这些符号本身就构成了标记 他们不涉及优先级关系
+    // gyxu====== 这些符号本身就构成了标记 他们不涉及优先级关系
     else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' || tk == '(' || tk == ')' || tk == ']' || tk == ',' || tk == ':') return;
   }
 }
 
+// gyxu 编译原理 expr代表表达式 非终结符  stmt语句
 void expr(int lev)
 {
   int t, *d;
@@ -326,7 +333,7 @@ void expr(int lev)
 }
 
 
-// gyxu 语法分析?
+// gyxu 语法分析?  语句分析statement  stmt表示语句 expr代表表达式
 void stmt()
 {
   int *a, *b;
@@ -379,7 +386,7 @@ void stmt()
 // gyxu main()的后半部分实现虚拟机 它的编译器部分不直接生成任何实际的机器汇编代码 而是在内存生成c4自己的虚拟机指令
 int main(int argc, char **argv)
 {
-  // gyxu idmain符号表“main” poolsz虚拟机各个存储区大小
+  // gyxu idmain符号表“main” poolsz虚拟机各个存储区大小  bt basetype ty存储刚刚读到的数据类型char int或ptr 
   int fd, bt, ty, poolsz, *idmain;
 
   // gyxu 虚拟机
@@ -433,65 +440,71 @@ int main(int argc, char **argv)
   p[i] = 0;
   close(fd);
 
-  // gyxu 解析声明
+  // gyxu 解析声明 全局变量声明 此编译器不支持#include 源码开头应该是全局变量或函数定义
   // parse declarations
   line = 1;     // gyxu line在next()中增加
   next();       // gyxu 读取源码第一个字节
   // gyxu 把所有源码检查一遍？
   while (tk) {
     bt = INT; // basetype
-    if (tk == Int) next();      // gyxu 关键字int类型
-    else if (tk == Char) { next(); bt = CHAR; }
-    else if (tk == Enum) {
+    if (tk == Int) next();      // gyxu 关键字int类型 再next一个
+    else if (tk == Char) { next(); bt = CHAR; }    // gyux 是int或char 再next一个 并且bt赋为char
+    else if (tk == Enum) {            // gyxu 枚举 将enum读入id符号表中
       next();
       if (tk != '{') next();
       if (tk == '{') {
         next();
-        i = 0;
+        i = 0;        // gyxu 初始化成0
         while (tk != '}') {
           if (tk != Id) { printf("%d: bad enum identifier %d\n", line, tk); return -1; }
           next();
-          if (tk == Assign) {
+          if (tk == Assign) {     // gyxu assign 赋值  如果枚举有赋值
             next();
             if (tk != Num) { printf("%d: bad enum initializer\n", line); return -1; }
-            i = ival;
+            i = ival;     // gyxu 给枚举赋值
             next();
           }
-          id[Class] = Num; id[Type] = INT; id[Val] = i++;
+          id[Class] = Num; id[Type] = INT; id[Val] = i++;    // gyxu 写入符号表  i++ i是枚举的值
           if (tk == ',') next();
         }
         next();
       }
     }
+    // gyxu 除int char enum之外
     while (tk != ';' && tk != '}') {
       ty = bt;
+      // gyxu 乘法* 指针 枚举PTR为2 while处理多级指针  ty存储刚刚读到的数据类型char int或ptr 
       while (tk == Mul) { next(); ty = ty + PTR; }
+      // gyxu 有类型却无具体符号 语法错误 退出
       if (tk != Id) { printf("%d: bad global declaration\n", line); return -1; }
+      // gyxu 符号表中已经存在了 重复定义   next()中id已经存在 id指针会返回 id的Class已经存在值了 默认初始化为0
       if (id[Class]) { printf("%d: duplicate global definition\n", line); return -1; }
+      // gyxu 继续读一个 再读一个 看是不是括号 如果是括号 就是函数 否则就是全局变量
       next();
-      id[Type] = ty;
+      id[Type] = ty;    // gyxu 刚才读取到并缓存的数据类型  为什么再读一个才给id赋值
       if (tk == '(') { // function
         id[Class] = Fun;
-        id[Val] = (int)(e + 1);
-        next(); i = 0;
-        while (tk != ')') {
+        id[Val] = (int)(e + 1);   // gyxu e代码段地址 函数地址
+        next(); i = 0;            // gyxu 继续读一个
+        while (tk != ')') {       // gyxu 读函数参数 和读全局变量一样 先读数据类型 指针 在读符号
           ty = INT;
           if (tk == Int) next();
           else if (tk == Char) { next(); ty = CHAR; }
           while (tk == Mul) { next(); ty = ty + PTR; }
           if (tk != Id) { printf("%d: bad parameter declaration\n", line); return -1; }
           if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", line); return -1; }
-          id[HClass] = id[Class]; id[Class] = Loc;
+          id[HClass] = id[Class]; id[Class] = Loc;    // gyxu HClass 这些可能是放函数参数的
           id[HType]  = id[Type];  id[Type] = ty;
           id[HVal]   = id[Val];   id[Val] = i++;
           next();
           if (tk == ',') next();
         }
         next();
+        // gyxu 读函数体内容
         if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
-        loc = ++i;
+        loc = ++i;   // gyxu loc是什么
         next();
-        while (tk == Int || tk == Char) {
+        while (tk == Int || tk == Char) {   // gyxu 函数体内只不处理enum
           bt = (tk == Int) ? INT : CHAR;
           next();
           while (tk != ';') {
@@ -521,7 +534,7 @@ int main(int argc, char **argv)
         }
       }
       else {
-        id[Class] = Glo;
+        id[Class] = Glo;    // gyxu Glo 全局变量
         id[Val] = (int)data;
         data = data + sizeof(int);
       }
