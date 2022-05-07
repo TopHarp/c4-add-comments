@@ -16,7 +16,7 @@
 char *p, *lp, // current position in source code // gyxu lp每行起始位置
      *data;   // data/bss pointer    // gyxu 20220415 是否是 bss段Block Started by Symbol 存放程序中未初始化全局变量的一块内存区域 静态区域 程序一开始就将其清零
 
-int *e, *le,  // current position in emitted code     // gyxu 代码段 内存指针
+int *e, *le,  // current position in emitted code     // gyxu 代码段 内存指针  已经是汇编语言了的代码
     *id,      // currently parsed identifier
     *sym,     // symbol table (simple list of identifiers)
     tk,       // current token
@@ -40,6 +40,10 @@ int *e, *le,  // current position in emitted code     // gyxu 代码段 内存�
 // gyxu 
 // gyxu 
 // gyxu 标记 标记顺序与优先级有关 Mul优先级高于Add
+// gyxu Num常量  Fun函数 Sys系统调用 Glo全局变量 Loc局部变量
+// gyxu Assign  =  Cond    ?   Lor     ||  Lan     &&   Or      |    Xor     ^   And     &   Eq      ==
+// gyxu Ne      !=   Lt      <   Gt      >   Le      <=   Ge      >=   Shl     <<  Shr     >>  Add     +
+// gyxu Sub     -    Mul     *   Div     /   Mod     %    Inc     ++   Dec     --  Brak    [     */
 // tokens and classes (operators last and in precedence order)
 enum {
   Num = 128, Fun, Sys, Glo, Loc, Id,
@@ -50,11 +54,22 @@ enum {
 // gyxu 指令集 基于x86？ 顺序为了打印调试信息更方便 带参指令在前？
 // gyxu MOV指令Inter风格 MOV dest source 虚拟机只有一个寄存器a 因此将Mov拆分为5个指令
 // gyxu IMM <num> 将num放入寄存器a中
-// gyxu LC 将对应地址中的字符载入 ax 中，要求 ax 中存放地址。
-// gyxu LI 将对应地址中的整数载入 ax 中，要求 ax 中存放地址。
+// gyxu LC 将a中存储地址中的字符载入 ax 中，要求 ax 中存放地址。
+// gyxu LI 将a中存储地址中的整数载入 ax 中，要求 ax 中存放地址。
 // gyxu SC 将 ax 中的数据作为字符存放入地址中，要求栈顶存放地址。
 // gyxu SI 将 ax 中的数据作为整数存放入地址中，要求栈顶存放地址。
-// gyxu PUSH
+// gyxu JSR 跳转到子函数
+// gyxu LEA 基址+pc当前位置存的数值 放入a  为了获取函数参数 我们只能操作a寄存器 所以定义了LEA
+// gyxu JMP 无条件pc指向pc中存的地址 pc是指向下一条指令的地址 因此该地址里存的就是需要跳转到的目的地址
+// gyxu BZ  a不为0 下一个指令 a为0 跳转到pc地址中存的地址数值
+// gyxu BNZ a为0 下一个指令 a不为0 跳转到pc地址中存的地址数值
+// gyxu ENT 进入子函数 bp基址指针 : 基址bp值入栈; sp当前值入bp; 栈sp进入pc指令地址处;pc内容是什么？栈减少若干个，入栈了若干个字节？保留一定的栈空间！
+// gyxu ADJ pc所指地址值赋给sp栈 是将压入栈的数据清除
+// gyxu 函数返回值：约定如果有返回值 返回值放在a中；
+// gyxu 函数参数，各种语言约定不同
+// gyxu C语言约定：1由调用者将参数入栈 2调用结束时由调用者出栈 3参数逆序入栈
+// gyxu LEV 从子函数中返回：基址寄存器赋回给sp 栈顶地址存放的值是之前的bp，再存回bp中；ret？栈顶存的内容是pc
+// gyxu PUSH 将a入栈
 // opcodes
 enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
        OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
@@ -66,8 +81,10 @@ enum { CHAR, INT, PTR };
 
 // gyxu attribute属性 表示某个程序构造相关的任意的量 比如表达式的数据类型、生成代码的指令数目 或为某个构造生成的代码中第一条指令的位置
 
-
 // gyxu 标识符结构体 符号表sym int型数组
+// gyxu Name 指向的是这个identifier标识符的Name
+// gyxu Type 为数据类型(比如返回值类型),如CHAR,INT,INT+PTR
+// gyxu Class 为类型,如Num(常量数值),Fun(函数),Sys(系统调用),Glo全局变量,Loc 局部变量
 // identifier offsets (since we can't create an ident struct)
 enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Idsz };
 
@@ -114,10 +131,10 @@ void next()
       while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')
         tk = tk * 147 + *p++;         // gyxu 计算hash 向后读取字节
       tk = (tk << 6) + (p - pp);      // gyxu p-pp 变量名字符数   上一行while包括本行 目的是计算hash
-      id = sym;
+      id = sym;    // gyxu 从符号表开始位置遍历一遍
       while (id[Tk]) {    // gyxu 查看符号表里是否已经存在该变量  如果已存在 返回变量tk sym未赋值的表id[Tk]是0
         if (tk == id[Hash] && !memcmp((char *)id[Name], pp, p - pp)) { tk = id[Tk]; return; }
-        id = id + Idsz;   // gyxu 步进到下一个 Idsz是enum最后一个
+        id = id + Idsz;   // gyxu 步进到下一个 Idsz是enum最后一个 如果未找到已存在变量 找到sym表的最后一个为止
       }
       id[Name] = (int)pp;   // gyxu 标志符起始位置
       id[Hash] = tk;
@@ -156,10 +173,10 @@ void next()
         if ((ival = *p++) == '\\') {    // gyxu  表示反斜杠
           if ((ival = *p++) == 'n') ival = '\n';
         }
-        if (tk == '"') *data++ = ival;   // gyxu 将p中字符串装入data区
+        if (tk == '"') *data++ = ival;   // gyxu 将p中字符串装入data区   ++优先级高于*
       }
       ++p;
-      if (tk == '"') ival = (int)pp; else tk = Num;   // gyxu 如果只是单个字符 返回Num类
+      if (tk == '"') ival = (int)pp; else tk = Num;   // gyxu ival返回本次data起始位置 如果只是单个字符 返回Num类
       return;
     }
     // gyxu====== p已经++  tk第一个字符 p第二个字符
@@ -181,45 +198,58 @@ void next()
   }
 }
 
-// gyxu 编译原理 expr代表表达式 非终结符  stmt语句
+// gyxu 表达式分析 编译原理 expr代表表达式 非终结符  stmt语句
 void expr(int lev)
 {
   int t, *d;
 
+  // gyxu === tk 0 
   if (!tk) { printf("%d: unexpected eof in expression\n", line); exit(-1); }
-  else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT; }
+  // gyxu === Num       IMM将数值放入寄存器a
+  else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT; }   // gyxu ty 缓存数据类型
+  // gyxu === "
   else if (tk == '"') {
     *++e = IMM; *++e = ival; next();
-    while (tk == '"') next();
-    data = (char *)((int)data + sizeof(int) & -sizeof(int)); ty = PTR;
+    while (tk == '"') next();   // gyxu 连续" 处理 多个字符串 都保存到data "aaa" "bbb"
+    // gyxu 追加字符串结尾 '\0'，所有的data默认是0，所以只需要将data向前移动一个位置即可 append the end of string character '\0',all the data are default to 0, so just move data one position forward.
+    // gyxu data = (char *)(((int)data + sizeof(int)) & (-sizeof(int)))
+    data = (char *)((int)data + sizeof(int) & -sizeof(int)); ty = PTR;  // gyxu 符号优先级 先正负号 然后加法+ 后按位与&
   }
+  // gyxu === sizeof
   else if (tk == Sizeof) {
     next(); if (tk == '(') next(); else { printf("%d: open paren expected in sizeof\n", line); exit(-1); }
+    // gyxu 读sizeof内容 int char
     ty = INT; if (tk == Int) next(); else if (tk == Char) { next(); ty = CHAR; }
+    // gyxu ptr
     while (tk == Mul) { next(); ty = ty + PTR; }
     if (tk == ')') next(); else { printf("%d: close paren expected in sizeof\n", line); exit(-1); }
     *++e = IMM; *++e = (ty == CHAR) ? sizeof(char) : sizeof(int);
     ty = INT;
   }
+  // gyxu === Id
   else if (tk == Id) {
-    d = id; next();
+    d = id; next();   // gyxu next读取到Id 当前符号表id=d
+    // gyxu 如果是函数fun 第一个读到符号表 第二个读到括号 是函数 
     if (tk == '(') {
       next();
-      t = 0;
+      t = 0;   // gyxu t 形参数量
+      // gyxu fun(expr) 递归expr PSH入栈 形参数量++
       while (tk != ')') { expr(Assign); *++e = PSH; ++t; if (tk == ',') next(); }
       next();
-      if (d[Class] == Sys) *++e = d[Val];
-      else if (d[Class] == Fun) { *++e = JSR; *++e = d[Val]; }
+      if (d[Class] == Sys) *++e = d[Val];  // gyxu 是系统调用
+      else if (d[Class] == Fun) { *++e = JSR; *++e = d[Val]; }  // gyxu 是函数 JSR跳入子函数
       else { printf("%d: bad function call\n", line); exit(-1); }
-      if (t) { *++e = ADJ; *++e = t; }
+      if (t) { *++e = ADJ; *++e = t; }      // gyxu ADJ pc所指地址值赋给sp栈 是将压入栈的数据清除
       ty = d[Type];
     }
+    // gyxu 是常量 将常量值放入立即数寄存器
     else if (d[Class] == Num) { *++e = IMM; *++e = d[Val]; ty = INT; }
+    // gyxu 其他情况
     else {
-      if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }
-      else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; }
+      if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }  // gyxu id是局部变量 LEA 将当前位置数据放入a
+      else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; }    // gyxu id是全局变量 将全局变量值放入寄存器啊 
       else { printf("%d: undefined variable\n", line); exit(-1); }
-      *++e = ((ty = d[Type]) == CHAR) ? LC : LI;
+      *++e = ((ty = d[Type]) == CHAR) ? LC : LI;      // gyxu LC/LI将寄存器a中存放地址中的数据内容放入a中
     }
   }
   else if (tk == '(') {
@@ -333,17 +363,18 @@ void expr(int lev)
 }
 
 
-// gyxu 语法分析?  语句分析statement  stmt表示语句 expr代表表达式
+// gyxu 语法分析 分析函数除声明之外的部分  语句分析statement  stmt表示语句 expr代表表达式
 void stmt()
 {
   int *a, *b;
 
+  // gyxu === if()
   if (tk == If) {
     next();
     if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
     expr(Assign);
     if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
-    *++e = BZ; b = ++e;
+    *++e = BZ; b = ++e;       // gyxu BZ a不为0跳转到下一个指令 为0跳转到pc地址中保存的地址
     stmt();
     if (tk == Else) {
       *b = (int)(e + 3); *++e = JMP; b = ++e;
@@ -352,6 +383,7 @@ void stmt()
     }
     *b = (int)(e + 1);
   }
+  // gyxu === while()
   else if (tk == While) {
     next();
     a = e + 1;
@@ -363,20 +395,24 @@ void stmt()
     *++e = JMP; *++e = (int)a;
     *b = (int)(e + 1);
   }
+  // gyxu === return
   else if (tk == Return) {
     next();
     if (tk != ';') expr(Assign);
     *++e = LEV;
-    if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
+    if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }  // gyxu 需要分号
   }
+  // gyxu === {
   else if (tk == '{') {
     next();
     while (tk != '}') stmt();
     next();
   }
+  // gyxu === ; 空语句
   else if (tk == ';') {
     next();
   }
+  // gyxu === 
   else {
     expr(Assign);
     if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
@@ -425,7 +461,7 @@ int main(int argc, char **argv)
   // gyxu 在词法分析前将关键字加入符号表
   p = "char else enum if int return sizeof while "
       "open read close printf malloc free memset memcmp exit void main";
-  // gyxu next()中 sym被赋给id p此时内容为上一行的赋值 所以sym表表头是关键字char else enum if int return sizeof while
+  // gyxu next()中 sym被赋给id p此时指向的内容为此处上一行字符串 所以sym表表头是关键字char else enum if int return sizeof while
   i = Char; while (i <= While) { next(); id[Tk] = i++; } // add keywords to symbol table
   // gyxu 添加外部函数库到符号表
   i = OPEN; while (i <= EXIT) { next(); id[Class] = Sys; id[Type] = INT; id[Val] = i++; } // add library to symbol table
@@ -447,6 +483,7 @@ int main(int argc, char **argv)
   // gyxu 把所有源码检查一遍？
   while (tk) {
     bt = INT; // basetype
+    // gyxu 读声明 包括Int Char Enum变量  fun函数  Glo全局变量
     if (tk == Int) next();      // gyxu 关键字int类型 再next一个
     else if (tk == Char) { next(); bt = CHAR; }    // gyux 是int或char 再next一个 并且bt赋为char
     else if (tk == Enum) {            // gyxu 枚举 将enum读入id符号表中
@@ -464,7 +501,7 @@ int main(int argc, char **argv)
             i = ival;     // gyxu 给枚举赋值
             next();
           }
-          id[Class] = Num; id[Type] = INT; id[Val] = i++;    // gyxu 写入符号表  i++ i是枚举的值
+          id[Class] = Num; id[Type] = INT; id[Val] = i++;    // gyxu 写入符号表  i++ i是枚举的值 枚举的Class设置成Num常量类
           if (tk == ',') next();
         }
         next();
@@ -481,48 +518,57 @@ int main(int argc, char **argv)
       if (id[Class]) { printf("%d: duplicate global definition\n", line); return -1; }
       // gyxu 继续读一个 再读一个 看是不是括号 如果是括号 就是函数 否则就是全局变量
       next();
-      id[Type] = ty;    // gyxu 刚才读取到并缓存的数据类型  为什么再读一个才给id赋值
+      id[Type] = ty;    // gyxu 刚才读取到并缓存的数据类型  为什么再读一个才给id赋值   赋值类型
+      // gyxu 函数 tk是括号 是函数
       if (tk == '(') { // function
         id[Class] = Fun;
-        id[Val] = (int)(e + 1);   // gyxu e代码段地址 函数地址
-        next(); i = 0;            // gyxu 继续读一个
-        while (tk != ')') {       // gyxu 读函数参数 和读全局变量一样 先读数据类型 指针 在读符号
+        id[Val] = (int)(e + 1);   // gyxu e代码段地址 函数地址  此处应该是代码的第一个函数main
+        next(); i = 0;            // gyxu 继续读一个 i初始化0
+        // gyxu 读函数参数 和读全局变量一样 先读数据类型 指针 在读符号
+        while (tk != ')') {
           ty = INT;
           if (tk == Int) next();
           else if (tk == Char) { next(); ty = CHAR; }
           while (tk == Mul) { next(); ty = ty + PTR; }
           if (tk != Id) { printf("%d: bad parameter declaration\n", line); return -1; }
           if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", line); return -1; }
-          id[HClass] = id[Class]; id[Class] = Loc;    // gyxu HClass 这些可能是放函数参数的
+          id[HClass] = id[Class]; id[Class] = Loc;    // gyxu HClass 备份符号信息 进入上下文有用？ 最后跳出函数后unwind
           id[HType]  = id[Type];  id[Type] = ty;
-          id[HVal]   = id[Val];   id[Val] = i++;
+          id[HVal]   = id[Val];   id[Val] = i++;      // gyxu 参数序号 归入局部变量 编号
           next();
           if (tk == ',') next();
         }
         next();
         // gyxu 读函数体内容
         if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
-        loc = ++i;   // gyxu loc是什么
+        loc = ++i;   // gyxu loc是函数参数数量？  上一行i记录函数参数序号  局部变量偏移  函数参数数量
         next();
-        while (tk == Int || tk == Char) {   // gyxu 函数体内只不处理enum
+        // gyxu 函数体内 处理Int Char 不处理enum fun 似乎不处理声明且赋值 
+        while (tk == Int || tk == Char) {
           bt = (tk == Int) ? INT : CHAR;
           next();
+          // gyxu 处理本行 直到;
           while (tk != ';') {
             ty = bt;
             while (tk == Mul) { next(); ty = ty + PTR; }
             if (tk != Id) { printf("%d: bad local declaration\n", line); return -1; }
+            // gyxu 此处next如已经找到同名变量且是Loc局部变量 重定义并return
             if (id[Class] == Loc) { printf("%d: duplicate local definition\n", line); return -1; }
+            // gyxu 此处如果next找到同名变量 则局部变量覆盖全局变量 用完后再unwind解绑变量
             id[HClass] = id[Class]; id[Class] = Loc;
             id[HType]  = id[Type];  id[Type] = ty;
-            id[HVal]   = id[Val];   id[Val] = ++i;
+            id[HVal]   = id[Val];   id[Val] = ++i;      // gyxu 函数体内局部变量序号 + 函数参数序号
             next();
             if (tk == ',') next();
           }
           next();
         }
-        *++e = ENT; *++e = i - loc;
-        while (tk != '}') stmt();
+        // gyxu 进入函数体内语句分析
+        *++e = ENT; *++e = i - loc;   // gyxu 函数体内局部变量个数  总个数-函数参数个数  e指针指向的是汇编后的汇编代码  ENT进入子函数指令
+        while (tk != '}') stmt();     // gyxu 句法分析
+        // gyxu 离开子函数
         *++e = LEV;
+        // gyxu unwind松开符号表局部变量覆盖的全局变量
         id = sym; // unwind symbol table locals
         while (id[Tk]) {
           if (id[Class] == Loc) {
@@ -530,7 +576,7 @@ int main(int argc, char **argv)
             id[Type] = id[HType];
             id[Val] = id[HVal];
           }
-          id = id + Idsz;
+          id = id + Idsz;     // gyxu 符号表跳转到下一个数据结构
         }
       }
       else {
@@ -545,11 +591,11 @@ int main(int argc, char **argv)
 
   // gyxu pc程序计数器 初始指向被编译代码的main
   if (!(pc = (int *)idmain[Val])) { printf("main() not defined\n"); return -1; }
-  if (src) return 0;
+  if (src) return 0;     // gyxu 编译器选项 标志位 是否打印代码和汇编
 
   // gyxu bp 基址寄存器
   // setup stack
-  bp = sp = (int *)((int)sp + poolsz);
+  bp = sp = (int *)((int)sp + poolsz);   // gyxu bp堆栈基址位置 压栈
   *--sp = EXIT; // call exit if main returns
   *--sp = PSH; t = sp;
   *--sp = argc;
@@ -601,7 +647,7 @@ int main(int argc, char **argv)
     else if (i == SI)  *(int *)*sp++ = a;                                 // store int
     // gyxu SC 将 ax 中的数据作为字符存放入地址中，要求栈顶存放地址。
     else if (i == SC)  a = *(char *)*sp++ = a;                            // store char
-    // gyxu PUSH
+    // gyxu PUSH 将a入栈
     else if (i == PSH) *--sp = a;                                         // push
 
     // gyxu 运算符指令 两参数 一个放栈顶 一个放a 结果放a
