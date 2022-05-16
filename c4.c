@@ -252,38 +252,47 @@ void expr(int lev)
       *++e = ((ty = d[Type]) == CHAR) ? LC : LI;      // gyxu LC/LI将寄存器a中存放地址中的数据内容放入a中
     }
   }
+  // gyxu 括号 强制转换
   else if (tk == '(') {
     next();
+    // gyxu 强制转换
     if (tk == Int || tk == Char) {
       t = (tk == Int) ? INT : CHAR; next();
       while (tk == Mul) { next(); t = t + PTR; }
       if (tk == ')') next(); else { printf("%d: bad cast\n", line); exit(-1); }
-      expr(Inc);
+      expr(Inc);   // gyxu Inc 自加 自减 中括号[
       ty = t;
     }
     else {
-      expr(Assign);
+      expr(Assign);   // gyxu 普通参数
       if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
     }
   }
+  // gyxu 单目乘法符号 指针取内容*
   else if (tk == Mul) {
     next(); expr(Inc);
     if (ty > INT) ty = ty - PTR; else { printf("%d: bad dereference\n", line); exit(-1); }
-    *++e = (ty == CHAR) ? LC : LI;
+    *++e = (ty == CHAR) ? LC : LI;    // gyxu LC将a中存储地址的内容放入a中 指针取内容
   }
+  // gyxu 按位取与
   else if (tk == And) {
     next(); expr(Inc);
     if (*e == LC || *e == LI) --e; else { printf("%d: bad address-of\n", line); exit(-1); }
     ty = ty + PTR;
   }
+  // gyxu 取反 逻辑取反 判断是否与0相等
   else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT; }
+  // gyxu 按位取反
   else if (tk == '~') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = -1; *++e = XOR; ty = INT; }
+  // gyxu 加 继续读
   else if (tk == Add) { next(); expr(Inc); ty = INT; }
+  // gyxu 减 继续读
   else if (tk == Sub) {
     next(); *++e = IMM;
     if (tk == Num) { *++e = -ival; next(); } else { *++e = -1; *++e = PSH; expr(Inc); *++e = MUL; }
     ty = INT;
   }
+  // gyxu 自加 自减
   else if (tk == Inc || tk == Dec) {
     t = tk; next(); expr(Inc);
     if (*e == LC) { *e = PSH; *++e = LC; }
@@ -296,6 +305,7 @@ void expr(int lev)
   }
   else { printf("%d: bad expression\n", line); exit(-1); }
 
+  // gyxu 多目运算符
   while (tk >= lev) { // "precedence climbing" or "Top Down Operator Precedence" method
     t = ty;
     if (tk == Assign) {
