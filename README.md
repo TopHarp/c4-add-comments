@@ -1,6 +1,8 @@
 c4 - C in four functions
 ========================
 
+https://github.com/rswier/c4
+
 An exercise in minimalism.
 
 Try the following:
@@ -12,3 +14,5 @@ Try the following:
     ./c4 c4.c hello.c
     ./c4 c4.c c4.c hello.c
 
+
+我在看这个代码，加了注释，很好，我喜欢这个代码
